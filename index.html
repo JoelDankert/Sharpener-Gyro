@@ -1,0 +1,160 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Angle Debug</title>
+  <style>
+    :root { --bg:#0b0c10; --card:#111318; --fg:#e5e7eb; --muted:#9ca3af; --accent:#60a5fa; --good:#22c55e; --warn:#f59e0b; }
+    *{box-sizing:border-box} html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.2 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:grid;place-items:center}
+    .wrap{width:100%;max-width:440px;padding:16px}
+    .card{background:var(--card);border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.35);padding:16px;display:grid;gap:12px}
+    .row{display:flex;gap:10px;align-items:center}
+    .big{font-size:48px;font-weight:800;letter-spacing:.02em}
+    .sub{font-size:24px;font-weight:700}
+    input[type="number"]{
+      width:120px;padding:10px 12px;border-radius:12px;border:1px solid #1f2430;background:#0f1116;color:var(--fg);
+      outline:none;font-weight:700;text-align:right
+    }
+    input[type="number"]:focus{border-color:#334155;box-shadow:0 0 0 4px rgba(96,165,250,.2)}
+    button{
+      padding:10px 14px;border-radius:12px;border:0;background:var(--accent);color:#0b1220;font-weight:800;cursor:pointer
+    }
+    button:active{transform:scale(0.98)}
+    .ok{color:var(--good)} .bad{color:var(--warn)}
+    .viz{display:grid;place-items:center;height:220px;background:#0f1116;border-radius:12px;border:1px solid #1f2430}
+    svg{width:240px;height:200px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <!-- live values -->
+      <div class="row" style="justify-content:space-between">
+        <div class="big"><span id="angle">--.--</span>°</div>
+        <div class="sub" id="dev">--.--°</div>
+      </div>
+
+      <!-- controls -->
+      <div class="row" style="justify-content:space-between">
+        <div class="row">
+          <input id="target" type="number" step="0.1" value="30"><span>°</span>
+        </div>
+        <button id="cal">Calibrate</button>
+      </div>
+
+      <!-- graphic -->
+      <div class="viz">
+        <svg viewBox="0 0 240 200" aria-label="Deviation">
+          <line x1="120" y1="20" x2="120" y2="180" stroke="#1f2430" stroke-width="2"/>
+          <circle cx="120" cy="100" r="24" fill="#0b1220" stroke="#334155" stroke-width="2"/>
+          <circle id="dot" cx="120" cy="100" r="10" fill="#60a5fa"/>
+          <text id="devtext" x="120" y="18" text-anchor="middle" font-size="12" fill="#9ca3af">0.00°</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* Elements */
+const angleEl = document.getElementById("angle");
+const devEl   = document.getElementById("dev");
+const devText = document.getElementById("devtext");
+const dot     = document.getElementById("dot");
+const targetIn= document.getElementById("target");
+const btnCal  = document.getElementById("cal");
+
+/* State */
+let target = Math.abs(parseFloat(targetIn.value)) || 30;
+let angleActual = NaN;     // latest raw value from /angle
+let angleDisplay = 0;      // smoothed for UI
+let devDisplay = 0;
+let inflight = false;      // prevent overlapping HTTP requests
+
+/* Tuning */
+const FETCH_INTERVAL_MS   = 100;     // ~16–17 Hz polling (stable on ESP32)
+const REQUEST_TIMEOUT_MS  = 800;    // allow enough time for reply
+const PX_PER_DEG          = 90/12;  // 7.5 px per degree; ±12° => ±90 px
+const CLAMP_PX            = 95;
+const CENTER_Y            = 100;
+
+/* Helpers */
+const fmt   = x => (isFinite(x) ? x.toFixed(2) : "--.--");
+const clamp = (x,a,b) => Math.max(a, Math.min(b, x));
+function nearestDeviation(angleDeg, targetDeg){
+  const T = Math.abs(targetDeg);
+  const d1 = angleDeg - T;
+  const d2 = angleDeg + T;
+  return (Math.abs(d1) <= Math.abs(d2)) ? d1 : d2; // signed
+}
+
+/* Robust poller: single in-flight request with timeout */
+async function pollNow(){
+  if (inflight) return;
+  inflight = true;
+
+  const ctrl = new AbortController();
+  const t = setTimeout(function(){ try{ ctrl.abort(); }catch(_){} }, REQUEST_TIMEOUT_MS);
+
+  try{
+    const r = await fetch("/angle", { cache: "no-store", signal: ctrl.signal });
+    if (r && r.ok){
+      const txt = (await r.text()).trim();
+      const a = parseFloat(txt);
+      if (isFinite(a)) angleActual = a;
+    }
+  }catch(e){
+    // ignore timeouts or brief glitches
+  }finally{
+    clearTimeout(t);
+    inflight = false;
+  }
+}
+setInterval(pollNow, FETCH_INTERVAL_MS);
+pollNow();
+
+/* Animation loop with time-based exponential smoothing */
+let last = performance.now();
+function animate(){
+  const now = performance.now();
+  const dt = (now - last) / 1000;
+  last = now;
+
+  const k = 5; // responsiveness
+  const alpha = 1 - Math.exp(-k * dt);
+
+  if (isFinite(angleActual)){
+    angleDisplay += (angleActual - angleDisplay) * alpha;
+
+    const devActual = nearestDeviation(angleDisplay, target);
+    devDisplay += (devActual - devDisplay) * alpha;
+
+    angleEl.textContent = fmt(angleDisplay);
+    devEl.textContent   = (devDisplay >= 0 ? "+" : "") + fmt(devDisplay) + "°";
+    devEl.className     = "sub " + (Math.abs(devDisplay) < 3 ? "ok" : "bad");
+    devText.textContent = fmt(devDisplay) + "°";
+
+    const dy = clamp(devDisplay * PX_PER_DEG, -CLAMP_PX, CLAMP_PX);
+    dot.setAttribute("cy", String(CENTER_Y - dy)); // positive deviation up
+  }
+
+  requestAnimationFrame(animate);
+}
+animate();
+
+/* UI hooks */
+targetIn.addEventListener("change", function(){
+  const v = parseFloat(targetIn.value);
+  target = (isFinite(v) && v > 0) ? Math.abs(v) : 30;
+  targetIn.value = target;
+});
+
+btnCal.addEventListener("click", async function(){
+  btnCal.disabled = true;
+  try{ await fetch("/recalibrate", { method: "POST" }); }catch(e){}
+  setTimeout(function(){ btnCal.disabled = false; }, 300);
+});
+</script>
+</body>
+</html>
