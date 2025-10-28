@@ -12,8 +12,8 @@ from machine import I2C, Pin
 from reader import AngleTracker
 
 # ---------- CONFIG ----------
-SSID = "ESP32-Angle"
-PASSWORD = "angle1234"
+SSID = "Knife Angle (192.168.4.1)"
+PASSWORD = "knife angle"
 
 AP_IP = "192.168.4.1"
 NETMASK = "255.255.255.0"

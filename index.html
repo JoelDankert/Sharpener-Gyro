@@ -10,9 +10,8 @@
       --card: #111318;
       --fg: #e5e7eb;
       --muted: #9ca3af;
-      --accent: #60a5fa;
-      --good: #22c55e;
-      --warn: #f59e0b;
+      --accent: #60a5fa; /* blue by default; toggled to red when reversed */
+      --warn: #e5e7eb;
     }
 
     * {
@@ -40,7 +39,6 @@
 
     .card {
       background: var(--card);
-if (result !== null) angleActual = Math.abs(90 - Math.abs(((((result % 360) + 360) % 360) % 180) - 90));
       border-radius: 16px;
       box-shadow: 0 8px 30px rgba(0, 0, 0, .35);
       padding: 16px;
@@ -50,7 +48,7 @@ if (result !== null) angleActual = Math.abs(90 - Math.abs(((((result % 360) + 36
 
     .row {
       display: flex;
-      gap: 10px;
+      gap: 5px;
       align-items: center;
     }
 
@@ -63,6 +61,11 @@ if (result !== null) angleActual = Math.abs(90 - Math.abs(((((result % 360) + 36
     .sub {
       font-size: 24px;
       font-weight: 700;
+    }
+
+    .offset-text {
+      font-size: 14px;
+      color: var(--muted);
     }
 
     input[type="number"] {
@@ -92,12 +95,16 @@ if (result !== null) angleActual = Math.abs(90 - Math.abs(((((result % 360) + 36
       cursor: pointer;
     }
 
+    .btn { background: var(--accent); }
+    .btn-left  { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+    .btn-right { border-top-left-radius: 0;  border-bottom-left-radius: 0;  }
+
     button:active {
       transform: scale(0.98);
     }
 
     .ok {
-      color: var(--good);
+      color: var(--accent);
     }
 
     .bad {
@@ -125,21 +132,27 @@ if (result !== null) angleActual = Math.abs(90 - Math.abs(((((result % 360) + 36
     <div class="card">
       <div class="row" style="justify-content: space-between;">
         <div class="big"><span id="angle">--.--</span>°</div>
-        <div class="sub" id="dev">--.--°</div>
+        <div style="display: flex; flex-direction: column; align-items: flex-end;">
+          <div class="sub" id="dev">--.--°</div>
+          <div class="offset-text" id="offsetText">Offset: --.--°</div>
+        </div>
       </div>
 
       <div class="row" style="justify-content: space-between;">
         <div class="row">
           <input id="target" type="number" step="0.1" value="30"><span>°</span>
         </div>
-        <button id="cal">Calibrate</button>
+        <div class="row">
+          <button id="offset" class="btn btn-left">Offset</button>
+          <button id="cal" class="btn btn-right">Calibrate</button>
+        </div>
       </div>
 
       <div class="viz">
         <svg viewBox="0 0 240 200" aria-label="Deviation">
           <line x1="120" y1="20" x2="120" y2="180" stroke="#1f2430" stroke-width="2"/>
           <circle cx="120" cy="100" r="24" fill="#0b1220" stroke="#334155" stroke-width="2"/>
-          <circle id="dot" cx="120" cy="100" r="10" fill="#60a5fa"/>
+          <circle id="dot" cx="120" cy="100" r="10" fill="var(--accent)"/>
           <text id="devtext" x="120" y="18" text-anchor="middle" font-size="12" fill="#9ca3af">0.00°</text>
         </svg>
       </div>
@@ -154,6 +167,8 @@ if (result !== null) angleActual = Math.abs(90 - Math.abs(((((result % 360) + 36
   const dot = document.getElementById("dot");
   const targetIn = document.getElementById("target");
   const btnCal = document.getElementById("cal");
+  const btnOffset = document.getElementById("offset");
+  const offsetText = document.getElementById("offsetText");
 
   /* STATE */
   let target = Math.abs(parseFloat(targetIn.value)) || 30;
@@ -161,6 +176,11 @@ if (result !== null) angleActual = Math.abs(90 - Math.abs(((((result % 360) + 36
   let angleDisplay = 0;
   let devDisplay = 0;
   let inflight = false;
+
+  // New state for side/offset
+  let reversed = false;               
+  let offsetDeg = 0;                  
+  let offsetSideWasReversed = null;   
 
   /* CONSTANTS */
   const FETCH_INTERVAL_MS = 100;
@@ -194,7 +214,12 @@ if (result !== null) angleActual = Math.abs(90 - Math.abs(((((result % 360) + 36
     try { await fetch(url, { method: "POST" }); } catch (_) {}
   }
 
-  /* POLLING */
+  function applyOffset(normAngle) {
+    if (!isFinite(normAngle) || !isFinite(offsetDeg) || !offsetDeg) return normAngle;
+    const signed = (reversed === offsetSideWasReversed) ? (normAngle - offsetDeg) : (normAngle + offsetDeg);
+    return clamp(signed, 0, 90);
+  }
+
   async function pollNow() {
     if (inflight) return;
     inflight = true;
@@ -203,7 +228,12 @@ if (result !== null) angleActual = Math.abs(90 - Math.abs(((((result % 360) + 36
     const timeout = setTimeout(() => safeAbort(controller), REQUEST_TIMEOUT_MS);
 
     const result = await safeFetch("/angle", { signal: controller.signal });
-    if (result !== null) angleActual = Math.abs(90 - Math.abs(((((result % 360) + 360) % 360) % 180) - 90));
+
+    if (result !== null) {
+      const raw = (((result % 360) + 360) % 360);   
+      reversed = (raw >= 90 && raw <= 270);
+      angleActual = Math.abs(90 - Math.abs(((raw % 180) - 90)));
+    }
 
     clearTimeout(timeout);
     inflight = false;
@@ -212,7 +242,6 @@ if (result !== null) angleActual = Math.abs(90 - Math.abs(((((result % 360) + 36
   setInterval(pollNow, FETCH_INTERVAL_MS);
   pollNow();
 
-  /* AUDIO */
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   let lastBeepTime = 0;
   function resumeAudio() {
@@ -241,7 +270,6 @@ if (result !== null) angleActual = Math.abs(90 - Math.abs(((((result % 360) + 36
     osc.stop(now + dur / 1000);
   }
 
-  /* ANIMATION */
   let last = performance.now();
   function animate() {
     const now = performance.now();
@@ -251,8 +279,14 @@ if (result !== null) angleActual = Math.abs(90 - Math.abs(((((result % 360) + 36
     const k = 5;
     const alpha = 1 - Math.exp(-k * dt);
 
+    const accent = reversed ? '#f87171' : '#60a5fa';
+    if (getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() !== accent) {
+      document.documentElement.style.setProperty('--accent', accent);
+    }
+
     if (isFinite(angleActual)) {
-      angleDisplay += (angleActual - angleDisplay) * alpha;
+      const targetAngle = applyOffset(angleActual);
+      angleDisplay += (targetAngle - angleDisplay) * alpha;
 
       const devActual = simpleDeviation(angleDisplay, target);
       devDisplay += (devActual - devDisplay) * alpha;
@@ -262,6 +296,8 @@ if (result !== null) angleActual = Math.abs(90 - Math.abs(((((result % 360) + 36
       devEl.textContent = fmt(absDev) + "°";
       devEl.className = "sub " + (absDev < 3 ? "ok" : "bad");
       devText.textContent = fmt(absDev) + "°";
+
+      offsetText.textContent = "Offset: " + fmt(offsetDeg*2) + "°";
 
       const dy = clamp(devDisplay * PX_PER_DEG, -CLAMP_PX, CLAMP_PX);
       dot.setAttribute("cy", String(CENTER_Y - dy));
@@ -279,16 +315,24 @@ if (result !== null) angleActual = Math.abs(90 - Math.abs(((((result % 360) + 36
   }
   animate();
 
-  /* UI */
   targetIn.addEventListener("change", () => {
     const v = parseFloat(targetIn.value);
     target = isFinite(v) && v > 0 ? Math.abs(v) : 30;
     targetIn.value = target;
   });
 
+  btnOffset.addEventListener("click", () => {
+    if (!isFinite(angleActual)) return;
+    offsetDeg = angleActual / 2;
+    offsetSideWasReversed = reversed;
+    btnOffset.disabled = true; setTimeout(() => btnOffset.disabled = false, 250);
+  });
+
   btnCal.addEventListener("click", async () => {
     btnCal.disabled = true;
     await safePost("/recalibrate");
+    offsetDeg = 0;
+    offsetSideWasReversed = null;
     setTimeout(() => { btnCal.disabled = false; }, 300);
   });
 </script></body></html>
