@@ -8,6 +8,7 @@ import uasyncio as asyncio
 import socket
 import uos
 import ujson
+import gc
 from machine import I2C, Pin
 
 from reader import AngleTracker
@@ -26,7 +27,7 @@ I2C_ID = 0
 I2C_SCL_PIN = 22
 I2C_SDA_PIN = 21
 I2C_FREQ_HZ = 400_000
-READ_PERIOD_MS = 100      # sensor refresh cadence for background task
+READ_PERIOD_MS = 50       # sensor refresh cadence for background task
 
 # ---------- Angle tracker ----------
 i2c = I2C(I2C_ID, scl=Pin(I2C_SCL_PIN), sda=Pin(I2C_SDA_PIN), freq=I2C_FREQ_HZ)
@@ -81,28 +82,13 @@ update_latest(tracker.get_last_delta(), tracker.get_last_age_ms())
 
 
 async def broadcast_latest():
-    if not event_clients:
-        return
-    data = latest_sse_data
     async with event_lock:
+        if not event_clients:
+            return
         targets = list(event_clients)
-    if not targets:
-        return
-    dead = []
-    for w in targets:
-        try:
-            await w.awrite(data)
-        except Exception:
-            dead.append(w)
-    if dead:
-        async with event_lock:
-            for w in dead:
-                if w in event_clients:
-                    event_clients.remove(w)
-                try:
-                    await w.aclose()
-                except Exception:
-                    pass
+    data = latest_sse_data
+    for writer in targets:
+        asyncio.create_task(_send_sse(writer, data))
 
 
 async def register_sse_client(writer):
@@ -110,14 +96,22 @@ async def register_sse_client(writer):
         event_clients.add(writer)
 
 
-async def unregister_sse_client(writer):
+async def unregister_sse_client(writer, *, close_writer=True):
     async with event_lock:
         if writer in event_clients:
             event_clients.remove(writer)
+    if close_writer:
+        try:
+            await writer.aclose()
+        except Exception:
+            pass
+
+
+async def _send_sse(writer, data):
     try:
-        await writer.aclose()
+        await writer.awrite(data)
     except Exception:
-        pass
+        await unregister_sse_client(writer)
 
 
 async def serve_sse(writer):
@@ -132,7 +126,6 @@ async def serve_sse(writer):
         await writer.awrite(": ok\n\n")
     except Exception:
         return
-
     await register_sse_client(writer)
     try:
         if latest_sse_data:
@@ -313,10 +306,20 @@ async def periodic_read():
         await asyncio.sleep_ms(READ_PERIOD_MS)
 
 
+async def periodic_gc():
+    while True:
+        await asyncio.sleep_ms(2000)
+        try:
+            gc.collect()
+        except Exception:
+            pass
+
+
 # ---------- Main entry ----------
 async def main():
     asyncio.create_task(periodic_read())
     asyncio.create_task(dns_catch_all(AP_IP))
+    asyncio.create_task(periodic_gc())
     srv = await asyncio.start_server(handle_client, "0.0.0.0", 80)
     print("HTTP server on http://{}/".format(AP_IP))
     while True:
