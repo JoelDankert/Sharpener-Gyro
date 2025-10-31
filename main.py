@@ -100,7 +100,6 @@ async def send_response(writer, status, ctype, body):
     await writer.awrite(hdr)
     if status != 204:
         await writer.awrite(body_bytes)
-    await asyncio.sleep_ms(50)
 
 
 async def send_file(writer, path, ctype="text/html; charset=utf-8"):
@@ -194,12 +193,6 @@ async def handle_client(reader, writer):
     except Exception:
         try:
             await send_response(writer, 500, "text/plain; charset=utf-8", "Server error")
-        except Exception:
-            pass
-    finally:
-        await asyncio.sleep_ms(50)
-        try:
-            await writer.aclose()
         except Exception:
             pass
 
