@@ -7,6 +7,8 @@ import network
 import uasyncio as asyncio
 import socket
 import uos
+import ujson
+import gc
 from machine import I2C, Pin
 
 from reader import AngleTracker
@@ -25,7 +27,7 @@ I2C_ID = 0
 I2C_SCL_PIN = 22
 I2C_SDA_PIN = 21
 I2C_FREQ_HZ = 400_000
-READ_PERIOD_MS = 100      # sensor refresh cadence for background task
+READ_PERIOD_MS = 50       # sensor refresh cadence for background task
 
 # ---------- Angle tracker ----------
 i2c = I2C(I2C_ID, scl=Pin(I2C_SCL_PIN), sda=Pin(I2C_SDA_PIN), freq=I2C_FREQ_HZ)
@@ -43,6 +45,103 @@ ap.active(True)
 ap.config(essid=SSID, password=PASSWORD, authmode=network.AUTH_WPA_WPA2_PSK)
 ap.ifconfig((AP_IP, NETMASK, GATEWAY, DNS_IP))
 print("AP started:", ap.ifconfig())
+
+# ---------- Measurement + SSE state ----------
+event_clients = set()
+event_lock = asyncio.Lock()
+latest_delta = None
+latest_age_ms = None
+latest_json = ujson.dumps({"delta": None, "age_ms": None})
+latest_sse_data = "data: {}\n\n".format(latest_json)
+
+
+def _round_delta(delta):
+    if delta is None:
+        return None
+    try:
+        return round(delta, 4)
+    except Exception:
+        return delta
+
+
+def update_latest(delta, age_ms):
+    global latest_delta, latest_age_ms, latest_json, latest_sse_data
+    latest_delta = delta
+    latest_age_ms = None if age_ms is None else int(age_ms)
+    payload = {
+        "delta": None if delta is None else _round_delta(delta),
+        "age_ms": latest_age_ms,
+    }
+    latest_json = ujson.dumps(payload)
+    latest_sse_data = "data: {}\n\n".format(latest_json)
+    return payload
+
+
+# initialize snapshot
+update_latest(tracker.get_last_delta(), tracker.get_last_age_ms())
+
+
+async def broadcast_latest():
+    async with event_lock:
+        if not event_clients:
+            return
+        targets = list(event_clients)
+    data = latest_sse_data
+    for writer in targets:
+        asyncio.create_task(_send_sse(writer, data))
+
+
+async def register_sse_client(writer):
+    async with event_lock:
+        event_clients.add(writer)
+
+
+async def unregister_sse_client(writer, *, close_writer=True):
+    async with event_lock:
+        if writer in event_clients:
+            event_clients.remove(writer)
+    if close_writer:
+        try:
+            await writer.aclose()
+        except Exception:
+            pass
+
+
+async def _send_sse(writer, data):
+    try:
+        await writer.awrite(data)
+    except Exception:
+        await unregister_sse_client(writer)
+
+
+async def serve_sse(writer):
+    hdr = (
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/event-stream\r\n"
+        "Cache-Control: no-store\r\n"
+        "Connection: keep-alive\r\n\r\n"
+    )
+    try:
+        await writer.awrite(hdr)
+        await writer.awrite(": ok\n\n")
+    except Exception:
+        return
+    await register_sse_client(writer)
+    try:
+        if latest_sse_data:
+            try:
+                await writer.awrite(latest_sse_data)
+            except Exception:
+                await unregister_sse_client(writer)
+                return
+        # hold the connection open; broadcast_latest will push data
+        while True:
+            await asyncio.sleep(30)
+            async with event_lock:
+                if writer not in event_clients:
+                    break
+    finally:
+        await unregister_sse_client(writer)
 
 
 # ---------- DNS catch-all (all A queries → AP_IP) ----------
@@ -99,7 +198,6 @@ async def send_response(writer, status, ctype, body):
     await writer.awrite(hdr)
     if status != 204:
         await writer.awrite(body_bytes)
-    await asyncio.sleep_ms(50)
 
 
 async def send_file(writer, path, ctype="text/html; charset=utf-8"):
@@ -173,13 +271,19 @@ async def handle_client(reader, writer):
         elif method == "GET" and (path == "/" or path.startswith("/index.html")):
             await send_file(writer, "index.html", "text/html; charset=utf-8")
 
+        elif method == "GET" and path == "/events":
+            await serve_sse(writer)
+            return
+
         elif method == "GET" and path == "/angle":
-            d = tracker.get_delta()
-            body = "--.--" if d is None else f"{d:+.2f}"
-            await send_response(writer, 200, "text/plain; charset=utf-8", body)
+            delta = tracker.get_delta()
+            age_ms = tracker.get_last_age_ms()
+            update_latest(delta, age_ms)
+            await send_response(writer, 200, "application/json; charset=utf-8", latest_json)
 
         elif path == "/recalibrate" and method in ("POST", "GET"):
             ok = tracker.recalibrate()
+            update_latest(tracker.get_last_delta(), tracker.get_last_age_ms())
             await send_response(writer, 200, "text/plain; charset=utf-8", "OK" if ok else "ERR")
 
         else:
@@ -190,25 +294,32 @@ async def handle_client(reader, writer):
             await send_response(writer, 500, "text/plain; charset=utf-8", "Server error")
         except Exception:
             pass
-    finally:
-        await asyncio.sleep_ms(50)
-        try:
-            await writer.aclose()
-        except Exception:
-            pass
 
 
 # ---------- Background sensor refresh ----------
 async def periodic_read():
     while True:
-        tracker.get_delta()
+        delta = tracker.get_delta()
+        age_ms = tracker.get_last_age_ms()
+        update_latest(delta, age_ms)
+        await broadcast_latest()
         await asyncio.sleep_ms(READ_PERIOD_MS)
+
+
+async def periodic_gc():
+    while True:
+        await asyncio.sleep_ms(2000)
+        try:
+            gc.collect()
+        except Exception:
+            pass
 
 
 # ---------- Main entry ----------
 async def main():
     asyncio.create_task(periodic_read())
     asyncio.create_task(dns_catch_all(AP_IP))
+    asyncio.create_task(periodic_gc())
     srv = await asyncio.start_server(handle_client, "0.0.0.0", 80)
     print("HTTP server on http://{}/".format(AP_IP))
     while True:
