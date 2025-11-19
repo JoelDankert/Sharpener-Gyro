@@ -73,6 +73,7 @@ class AngleTracker:
     Modes:
       - "PITCH": about +Y axis
       - "ROLL" : about +X axis
+      - "YAW"  : about +Z axis
     """
     def __init__(
         self,
@@ -96,6 +97,9 @@ class AngleTracker:
         if mode == "ROLL":
             self.axis = _vec_norm((1.0, 0.0, 0.0))
             self.angle_mode = "ROLL"
+        elif mode == "YAW":
+            self.axis = _vec_norm((0.0, 0.0, 1.0))
+            self.angle_mode = "YAW"
         else:
             self.axis = _vec_norm((0.0, 1.0, 0.0))
             self.angle_mode = "PITCH"

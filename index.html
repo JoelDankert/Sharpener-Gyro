@@ -93,6 +93,46 @@
       width: 110px;
     }
 
+    .mode-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .mode-toggle {
+      display: flex;
+      gap: 4px;
+      background: #0f1116;
+      border-radius: 999px;
+      border: 1px solid #1f2430;
+      padding: 4px;
+    }
+
+    .mode-btn {
+      flex: 1;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      padding: 8px 0;
+      cursor: pointer;
+      transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .mode-btn.active {
+      background: var(--accent);
+      color: #050a15;
+      box-shadow: 0 8px 24px rgba(96, 165, 250, .35);
+    }
+
+    .mode-btn:active {
+      transform: none;
+    }
+
     .thresholds {
       justify-content: space-between;
       flex-wrap: wrap;
@@ -179,6 +219,15 @@
         </div>
       </div>
 
+      <div class="mode-field">
+        <span class="field-label">Angle Mode</span>
+        <div class="mode-toggle" role="group" aria-label="Angle mode selector">
+          <button type="button" class="mode-btn" data-mode-option="PITCH" aria-pressed="false">Pitch</button>
+          <button type="button" class="mode-btn" data-mode-option="ROLL" aria-pressed="false">Roll</button>
+          <button type="button" class="mode-btn" data-mode-option="YAW" aria-pressed="false">Yaw</button>
+        </div>
+      </div>
+
       <div class="row" style="justify-content: space-between;">
         <div class="row">
           <input id="target" type="number" step="0.1" value="30"><span>°</span>
@@ -238,6 +287,7 @@
   const criticalIn = document.getElementById("critical");
   const silenceIn = document.getElementById("silence");
   const cardEl = document.querySelector(".card");
+  const modeButtons = Array.from(document.querySelectorAll("[data-mode-option]"));
 
   /* STATE */
   const STORAGE_KEYS = {
@@ -252,6 +302,8 @@
     critical: 4,
     silence: 10,
   };
+  const MODE_STORAGE_KEY = "sharpener.angleMode";
+  const MODE_CHOICES = ["PITCH", "ROLL", "YAW"];
   const MIN_CRITICAL_MARGIN = 0.1;
   const MIN_SILENCE_MARGIN = 0.5;
 
@@ -268,6 +320,8 @@
   let lastSseMsgAt = 0;
   let lastSseIntervalMs = null;
   let transportMode = "poll";
+  let angleMode = null;
+  let modeInflight = false;
 
   // New state for side/offset
   let reversed = false;               
@@ -434,6 +488,116 @@
     return clamp(signed, 0, 90);
   }
 
+  const sanitizeModeName = (value) => {
+    if (typeof value !== "string") return null;
+    const upper = value.trim().toUpperCase();
+    return MODE_CHOICES.includes(upper) ? upper : null;
+  };
+
+  function updateModeButtons(mode) {
+    if (!modeButtons.length) return;
+    const normalized = sanitizeModeName(mode);
+    modeButtons.forEach(btn => {
+      const btnMode = sanitizeModeName(btn.dataset.modeOption);
+      const active = Boolean(normalized && btnMode === normalized);
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+  }
+
+  function loadStoredMode() {
+    try {
+      return localStorage.getItem(MODE_STORAGE_KEY);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function storeMode(mode) {
+    if (!mode) return;
+    try {
+      localStorage.setItem(MODE_STORAGE_KEY, mode);
+    } catch (_) {}
+  }
+
+  function clearStoredMode() {
+    try {
+      localStorage.removeItem(MODE_STORAGE_KEY);
+    } catch (_) {}
+  }
+
+  function applyModeSelection(mode) {
+    const normalized = sanitizeModeName(mode);
+    angleMode = normalized;
+    if (normalized) {
+      storeMode(normalized);
+    } else {
+      clearStoredMode();
+    }
+    updateModeButtons(normalized);
+  }
+
+  async function syncModeFromServer() {
+    try {
+      const res = await fetch("/angle-mode", { cache: "no-store" });
+      if (!res || !res.ok) return;
+      const data = await res.json();
+      const serverMode = sanitizeModeName(data && data.mode);
+      if (serverMode) {
+        applyModeSelection(serverMode);
+      }
+    } catch (_) {}
+  }
+
+  async function requestModeChange(nextMode) {
+    const desired = sanitizeModeName(nextMode);
+    if (!desired || modeInflight) return;
+    if (desired === angleMode) return;
+    modeInflight = true;
+    updateModeButtons(desired);
+    try {
+      const res = await fetch("/angle-mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: desired }),
+      });
+      if (res && res.ok) {
+        const data = await res.json();
+        const serverMode = sanitizeModeName(data && data.mode);
+        if (serverMode) {
+          applyModeSelection(serverMode);
+        } else {
+          updateModeButtons(angleMode);
+        }
+      } else {
+        updateModeButtons(angleMode);
+      }
+    } catch (_) {
+      updateModeButtons(angleMode);
+    } finally {
+      modeInflight = false;
+    }
+  }
+
+  function initModeSelector() {
+    if (!modeButtons.length) return;
+    const stored = sanitizeModeName(loadStoredMode());
+    if (stored) {
+      applyModeSelection(stored);
+    } else {
+      updateModeButtons(null);
+    }
+    modeButtons.forEach(btn => {
+      btn.addEventListener("click", () => {
+        const btnMode = sanitizeModeName(btn.dataset.modeOption);
+        if (btnMode) {
+          requestModeChange(btnMode);
+        }
+      });
+    });
+    syncModeFromServer();
+  }
+
   async function pollNow() {
     if (inflight) return;
     inflight = true;
@@ -527,6 +691,7 @@
     }
   }
 
+  initModeSelector();
   initSettings();
   startPolling();
   startEventStream();

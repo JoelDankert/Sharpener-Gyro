@@ -22,16 +22,31 @@ NETMASK = "255.255.255.0"
 GATEWAY = "192.168.4.1"
 DNS_IP = "8.8.8.8"
 
-ANGLE_MODE = "PITCH"     # "PITCH" or "ROLL"
+ANGLE_MODE = "PITCH"     # "PITCH", "ROLL", or "YAW"
 I2C_ID = 0
 I2C_SCL_PIN = 22
 I2C_SDA_PIN = 21
 I2C_FREQ_HZ = 400_000
 READ_PERIOD_MS = 50       # sensor refresh cadence for background task
+VALID_ANGLE_MODES = ("PITCH", "ROLL", "YAW")
 
 # ---------- Angle tracker ----------
+def _normalize_mode_name(mode):
+    if not mode:
+        return None
+    if not isinstance(mode, str):
+        try:
+            mode = str(mode)
+        except Exception:
+            return None
+    mode_upper = mode.strip().upper()
+    return mode_upper if mode_upper in VALID_ANGLE_MODES else None
+
+
+default_mode = _normalize_mode_name(ANGLE_MODE) or "PITCH"
 i2c = I2C(I2C_ID, scl=Pin(I2C_SCL_PIN), sda=Pin(I2C_SDA_PIN), freq=I2C_FREQ_HZ)
-tracker = AngleTracker(i2c, angle_mode=ANGLE_MODE, calibration_delay_ms=1500)
+tracker = AngleTracker(i2c, angle_mode=default_mode, calibration_delay_ms=1500)
+current_angle_mode = tracker.angle_mode
 
 print("Calibrating... keep sensor still.")
 if tracker.recalibrate():
@@ -226,6 +241,7 @@ async def send_file(writer, path, ctype="text/html; charset=utf-8"):
 
 # ---------- HTTP handler ----------
 async def handle_client(reader, writer):
+    global current_angle_mode
     try:
         req = await reader.readline()
         if not req:
@@ -252,11 +268,12 @@ async def handle_client(reader, writer):
                     content_length = int(hl.split(":", 1)[1].strip())
                 except Exception:
                     content_length = 0
+        body = b""
         if content_length:
             try:
-                await reader.readexactly(content_length)
+                body = await reader.readexactly(content_length)
             except Exception:
-                pass
+                body = b""
 
         # ---- OS captive portal checks ----
         if method == "GET" and path in ("/generate_204", "/gen_204"):
@@ -280,6 +297,32 @@ async def handle_client(reader, writer):
             age_ms = tracker.get_last_age_ms()
             update_latest(delta, age_ms)
             await send_response(writer, 200, "application/json; charset=utf-8", latest_json)
+
+        elif path == "/angle-mode" and method == "GET":
+            payload = ujson.dumps({"mode": current_angle_mode})
+            await send_response(writer, 200, "application/json; charset=utf-8", payload)
+
+        elif path == "/angle-mode" and method == "POST":
+            next_mode = None
+            if body:
+                try:
+                    raw = ujson.loads(body)
+                except Exception:
+                    raw = None
+                if isinstance(raw, dict):
+                    next_mode = _normalize_mode_name(raw.get("mode"))
+                elif isinstance(raw, str):
+                    next_mode = _normalize_mode_name(raw)
+            if not next_mode:
+                await send_response(writer, 400, "application/json; charset=utf-8", ujson.dumps({"error": "invalid mode"}))
+            else:
+                if next_mode != current_angle_mode:
+                    tracker.set_angle_mode(next_mode)
+                    tracker.recalibrate()
+                    current_angle_mode = tracker.angle_mode
+                    update_latest(tracker.get_last_delta(), tracker.get_last_age_ms())
+                payload = ujson.dumps({"mode": current_angle_mode})
+                await send_response(writer, 200, "application/json; charset=utf-8", payload)
 
         elif path == "/recalibrate" and method in ("POST", "GET"):
             ok = tracker.recalibrate()
