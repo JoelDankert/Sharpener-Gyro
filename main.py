@@ -294,6 +294,9 @@ async def handle_client(reader, writer):
         elif method == "GET" and (path == "/" or path.startswith("/index.html")):
             await send_file(writer, "index.html", "text/html; charset=utf-8")
 
+        elif method == "GET" and (path == "/settings" or path.startswith("/settings.html")):
+            await send_file(writer, "settings.html", "text/html; charset=utf-8")
+
         elif method == "GET" and path == "/events":
             await serve_sse(writer)
             return

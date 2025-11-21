@@ -47,11 +47,7 @@
       transition: box-shadow 0.2s ease;
     }
 
-    .row {
-      display: flex;
-      gap: 5px;
-      align-items: center;
-    }
+    .row { display: flex; gap: 5px; align-items: center; }
 
     .big {
       font-size: 48px;
@@ -91,69 +87,6 @@
 
     .field input {
       width: 110px;
-    }
-
-    .mode-field {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .mode-toggle {
-      display: flex;
-      gap: 4px;
-      background: #0f1116;
-      border-radius: 999px;
-      border: 1px solid #1f2430;
-      padding: 4px;
-    }
-
-    .mode-btn {
-      flex: 1;
-      border: 0;
-      border-radius: 999px;
-      background: transparent;
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-      padding: 8px 0;
-      cursor: pointer;
-      transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
-    }
-
-    .mode-btn.active {
-      background: var(--accent);
-      color: #050a15;
-      box-shadow: 0 8px 24px rgba(96, 165, 250, .35);
-    }
-
-    .mode-btn:active {
-      transform: none;
-    }
-
-    .thresholds {
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 12px;
-    }
-
-    input[type="number"] {
-      width: 120px;
-      padding: 10px 12px;
-      border-radius: 12px;
-      border: 1px solid #1f2430;
-      background: #0f1116;
-      color: var(--fg);
-      outline: none;
-      font-weight: 700;
-      text-align: right;
-    }
-
-    input[type="number"]:focus {
-      border-color: #334155;
-      box-shadow: 0 0 0 4px rgba(96, 165, 250, .2);
     }
 
     button {
@@ -205,6 +138,41 @@
       width: 240px;
       height: 200px;
     }
+
+    .section {
+      background: #0f1116;
+      border: 1px solid #1f2430;
+      border-radius: 12px;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .section-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .chart {
+      width: 100%;
+      height: 120px;
+      background: #0c1018;
+      border: 1px solid #1f2430;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .chart canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
   </style>
 </head>
 
@@ -219,47 +187,12 @@
         </div>
       </div>
 
-      <div class="mode-field">
-        <span class="field-label">Angle Mode</span>
-        <div class="mode-toggle" role="group" aria-label="Angle mode selector">
-          <button type="button" class="mode-btn" data-mode-option="PITCH" aria-pressed="false">Pitch</button>
-          <button type="button" class="mode-btn" data-mode-option="ROLL" aria-pressed="false">Roll</button>
-          <button type="button" class="mode-btn" data-mode-option="YAW" aria-pressed="false">Yaw</button>
-        </div>
-      </div>
-
-      <div class="row" style="justify-content: space-between;">
-        <div class="row">
-          <input id="target" type="number" step="0.1" value="30"><span>°</span>
-        </div>
+      <div class="row" style="justify-content: space-between; align-items: center;">
+        <button id="settingsBtn" class="btn" style="background:#1f2937;color:var(--fg);box-shadow:0 10px 24px rgba(0,0,0,.35);" aria-label="Open settings">Settings</button>
         <div class="row">
           <button id="offset" class="btn btn-left">Offset</button>
           <button id="cal" class="btn btn-right">Calibrate</button>
         </div>
-      </div>
-
-      <div class="row thresholds">
-        <label class="field">
-          <span class="field-label">Deadband</span>
-          <div class="field-row">
-            <input id="deadband" type="number" step="0.1" min="0" max="30" value="0.5">
-            <span>°</span>
-          </div>
-        </label>
-        <label class="field">
-          <span class="field-label">Critical</span>
-          <div class="field-row">
-            <input id="critical" type="number" step="0.1" min="0" max="60" value="4">
-            <span>°</span>
-          </div>
-        </label>
-        <label class="field">
-          <span class="field-label">Silence &gt;</span>
-          <div class="field-row">
-            <input id="silence" type="number" step="0.1" min="0" max="90" value="10">
-            <span>°</span>
-          </div>
-        </label>
       </div>
 
       <div class="viz">
@@ -269,6 +202,16 @@
           <circle id="dot" cx="120" cy="100" r="10" fill="var(--accent)"/>
           <text id="devtext" x="120" y="18" text-anchor="middle" font-size="12" fill="#9ca3af">0.00°</text>
         </svg>
+      </div>
+
+      <div class="section" data-chart-section>
+        <div class="section-title">
+          <span>Angle Stability (last 30s)</span>
+          <span id="chartMeta">-- samples</span>
+        </div>
+        <div class="chart">
+          <canvas id="stabilityChart" width="400" height="120"></canvas>
+        </div>
       </div>
     </div>
   </div>
@@ -288,6 +231,10 @@
   const silenceIn = document.getElementById("silence");
   const cardEl = document.querySelector(".card");
   const modeButtons = Array.from(document.querySelectorAll("[data-mode-option]"));
+  const chartSection = document.querySelector("[data-chart-section]");
+  const chartCanvas = document.getElementById("stabilityChart");
+  const chartMeta = document.getElementById("chartMeta");
+  const settingsBtn = document.getElementById("settingsBtn");
 
   /* STATE */
   const STORAGE_KEYS = {
@@ -295,12 +242,16 @@
     deadband: "sharpener.deadband",
     critical: "sharpener.critical",
     silence: "sharpener.silence",
+    smoothing: "sharpener.chartSmoothing",
   };
+  const SHOW_CHART_KEY = "sharpener.showChart";
+  const SHOW_MEAN_KEY = "sharpener.showMeanMarkers";
   const DEFAULTS = {
     target: 20,
     deadband: 1,
     critical: 4,
     silence: 10,
+    smoothing: 0.3,
   };
   const MODE_STORAGE_KEY = "sharpener.angleMode";
   const MODE_CHOICES = ["PITCH", "ROLL", "YAW"];
@@ -336,12 +287,21 @@
   const CENTER_Y = 100;
   const LATENCY_LOG_INTERVAL_MS = 3000;
   const SSE_RETRY_DELAY_MS = 5000;
+  const HISTORY_WINDOW_MS = 30000;
+  const HISTORY_PADDING_PX = 6;
+  const MAX_CHART_DEG = 10;
 
   let lastFetchAgeMs = null;
   let lastFetchRttMs = null;
   let lastFetchCompletedAt = 0;
   let debugLatency = false;
   let lastLatencyLogMs = 0;
+  let history = [];
+  let lastHistoryPruneAt = 0;
+  let chartSmoothed = null;
+  let chartVisible = true;
+  let showMeanMarkers = true;
+  let chartSmoothAlpha = DEFAULTS.smoothing;
 
   /* HELPERS */
   const fmt = x => (isFinite(x) ? x.toFixed(2) : "--.--");
@@ -393,11 +353,36 @@
     lastLatencyLogMs = now;
   }
 
+  function pruneHistory(now) {
+    if (now - lastHistoryPruneAt < 300) return;
+    const cutoff = now - HISTORY_WINDOW_MS;
+    history = history.filter(s => s.t >= cutoff);
+    lastHistoryPruneAt = now;
+  }
+
+  function addHistorySample(devSigned, side, now = performance.now()) {
+    if (!isFinite(devSigned)) return;
+    history.push({ t: now, dev: devSigned, side });
+    pruneHistory(now);
+  }
+
   function applyDelta(delta) {
     if (!isFinite(delta)) return;
+    const now = performance.now();
     const raw = (((delta % 360) + 360) % 360);
     reversed = (raw >= 90 && raw <= 270);
     angleActual = Math.abs(90 - Math.abs(((raw % 180) - 90)));
+
+    if (!isFinite(angleActual)) return;
+    const targetAngle = applyOffset(angleActual);
+    const devSigned = isFinite(targetAngle) ? (targetAngle - target) : NaN;
+    if (isFinite(devSigned)) {
+      chartSmoothed = chartSmoothed === null
+        ? devSigned
+        : chartSmoothed + chartSmoothAlpha * (devSigned - chartSmoothed);
+      addHistorySample(chartSmoothed, reversed ? "B" : "A", now);
+    }
+
   }
 
   function loadSetting(key, fallback) {
@@ -413,6 +398,54 @@
 
   function persistSetting(key, value) {
     try { localStorage.setItem(key, String(value)); } catch (_) {}
+  }
+
+  function loadChartPreference() {
+    try {
+      const raw = localStorage.getItem(SHOW_CHART_KEY);
+      if (raw === null) return true;
+      return raw === "1" || raw === "true";
+    } catch (_) {
+      return true;
+    }
+  }
+
+  function persistChartPreference(show) {
+    try { localStorage.setItem(SHOW_CHART_KEY, show ? "1" : "0"); } catch (_) {}
+  }
+
+  function loadMeanPreference() {
+    try {
+      const raw = localStorage.getItem(SHOW_MEAN_KEY);
+      if (raw === null) return true;
+      return raw === "1" || raw === "true";
+    } catch (_) {
+      return true;
+    }
+  }
+
+  function loadSmoothing() {
+    const fallback = DEFAULTS.smoothing;
+    const raw = loadSetting(STORAGE_KEYS.smoothing, fallback);
+    const val = isFinite(raw) ? raw : fallback;
+    return clamp(val, 0.05, 0.9);
+  }
+
+  function persistSmoothing(alpha) {
+    const val = clamp(alpha, 0.05, 0.9);
+    persistSetting(STORAGE_KEYS.smoothing, val);
+    chartSmoothAlpha = val;
+  }
+
+  function persistMeanPreference(show) {
+    try { localStorage.setItem(SHOW_MEAN_KEY, show ? "1" : "0"); } catch (_) {}
+  }
+
+  function applyChartVisibility(show) {
+    chartVisible = !!show;
+    if (chartSection) {
+      chartSection.style.display = show ? "grid" : "none";
+    }
   }
 
   function sanitizeTarget(v) {
@@ -443,15 +476,19 @@
     critical = sanitizeCritical(loadSetting(STORAGE_KEYS.critical, DEFAULTS.critical), deadband);
     silence = sanitizeSilence(loadSetting(STORAGE_KEYS.silence, DEFAULTS.silence), critical);
 
-    targetIn.value = target;
-    deadbandIn.value = deadband;
-    criticalIn.value = critical;
-    silenceIn.value = silence;
+    if (targetIn) targetIn.value = target;
+    if (deadbandIn) deadbandIn.value = deadband;
+    if (criticalIn) criticalIn.value = critical;
+    if (silenceIn) silenceIn.value = silence;
 
     persistSetting(STORAGE_KEYS.target, target);
     persistSetting(STORAGE_KEYS.deadband, deadband);
     persistSetting(STORAGE_KEYS.critical, critical);
     persistSetting(STORAGE_KEYS.silence, silence);
+
+    applyChartVisibility(loadChartPreference());
+    showMeanMarkers = loadMeanPreference();
+    chartSmoothAlpha = loadSmoothing();
   }
 
   async function fetchAngle(options = {}) {
@@ -580,21 +617,25 @@
   }
 
   function initModeSelector() {
-    if (!modeButtons.length) return;
     const stored = sanitizeModeName(loadStoredMode());
-    if (stored) {
-      applyModeSelection(stored);
-    } else {
-      updateModeButtons(null);
-    }
-    modeButtons.forEach(btn => {
-      btn.addEventListener("click", () => {
-        const btnMode = sanitizeModeName(btn.dataset.modeOption);
-        if (btnMode) {
-          requestModeChange(btnMode);
-        }
+    if (modeButtons.length) {
+      if (stored) {
+        applyModeSelection(stored);
+      } else {
+        updateModeButtons(null);
+      }
+      modeButtons.forEach(btn => {
+        btn.addEventListener("click", () => {
+          const btnMode = sanitizeModeName(btn.dataset.modeOption);
+          if (btnMode) {
+            requestModeChange(btnMode);
+          }
+        });
       });
-    });
+    } else if (stored) {
+      // No buttons on the main page, but still persist/apply the last choice to the device.
+      requestModeChange(stored);
+    }
     syncModeFromServer();
   }
 
@@ -693,6 +734,20 @@
 
   initModeSelector();
   initSettings();
+  window.addEventListener("storage", (evt) => {
+    if (evt.key === SHOW_CHART_KEY) {
+      applyChartVisibility(loadChartPreference());
+    }
+    if (evt.key === SHOW_MEAN_KEY) {
+      showMeanMarkers = loadMeanPreference();
+    }
+    if (evt.key === STORAGE_KEYS.smoothing) {
+      chartSmoothAlpha = loadSmoothing();
+    }
+    if (evt.key && Object.values(STORAGE_KEYS).includes(evt.key)) {
+      initSettings();
+    }
+  });
   startPolling();
   startEventStream();
 
@@ -756,6 +811,107 @@
     osc.connect(gain).connect(audioCtx.destination);
     osc.start(now);
     osc.stop(now + duration);
+  }
+
+  function drawStabilityChart() {
+    if (!chartCanvas) return;
+    if (!chartVisible) {
+      if (chartMeta) chartMeta.textContent = "Chart hidden";
+      return;
+    }
+    const ctx = chartCanvas.getContext("2d");
+    if (!ctx) return;
+    const dpr = Math.max(window.devicePixelRatio || 1, 1);
+    const width = chartCanvas.clientWidth || 400;
+    const height = chartCanvas.clientHeight || 120;
+    if (chartCanvas.width !== Math.floor(width * dpr) || chartCanvas.height !== Math.floor(height * dpr)) {
+      chartCanvas.width = Math.floor(width * dpr);
+      chartCanvas.height = Math.floor(height * dpr);
+    }
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, width, height);
+
+    const padding = HISTORY_PADDING_PX;
+    const zeroY = height / 2;
+    const usableWidth = width - padding * 2;
+    const usableHeight = height - padding * 2;
+    const now = performance.now();
+    pruneHistory(now);
+    const start = now - HISTORY_WINDOW_MS;
+    const samples = history.filter(h => h.t >= start);
+    const maxAbsRaw = samples.reduce((acc, s) => Math.max(acc, Math.abs(s.dev)), Math.max(critical, deadband, 1));
+    const maxAbs = clamp(maxAbsRaw, 1, MAX_CHART_DEG);
+    const scaleY = (usableHeight / 2) / (maxAbs || 1);
+    const toX = (t) => padding + ((t - start) / HISTORY_WINDOW_MS) * usableWidth;
+    const toY = (dev) => zeroY - clamp(dev, -MAX_CHART_DEG, MAX_CHART_DEG) * scaleY;
+
+    // background
+    ctx.fillStyle = "#0c1018";
+    ctx.fillRect(0, 0, width, height);
+
+    // bands
+    const bandHeightDead = Math.min(deadband, MAX_CHART_DEG) * scaleY;
+    const bandHeightCrit = Math.min(critical, MAX_CHART_DEG) * scaleY;
+    ctx.fillStyle = "rgba(96,165,250,0.08)";
+    ctx.fillRect(padding, zeroY - bandHeightDead, usableWidth, bandHeightDead * 2);
+    ctx.fillStyle = "rgba(248,113,113,0.07)";
+    ctx.fillRect(padding, zeroY - bandHeightCrit, usableWidth, bandHeightCrit * 2);
+
+    // baseline (correct angle)
+    ctx.strokeStyle = "#7f8fa3";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([2.5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(padding, zeroY);
+    ctx.lineTo(width - padding, zeroY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // history line
+    if (samples.length >= 1) {
+      const first = samples[0];
+      const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#60a5fa';
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(toX(first.t), toY(first.dev));
+      for (let i = 1; i < samples.length; i++) {
+        const s = samples[i];
+        ctx.lineTo(toX(s.t), toY(s.dev));
+      }
+      ctx.stroke();
+
+      const sideNow = reversed ? "B" : "A";
+      const filtered = samples.filter(s => s.side === sideNow && Math.abs(s.dev) < Math.max(critical, 0.01));
+      if (showMeanMarkers && filtered.length) {
+        const avg = filtered.reduce((acc, s) => acc + s.dev, 0) / filtered.length;
+        const dotX = width - padding + 2;
+        const dotY = toY(avg);
+        ctx.fillStyle = avg >= 0 ? "rgba(96,165,250,0.95)" : "rgba(248,113,113,0.95)";
+        ctx.beginPath();
+        ctx.arc(dotX, dotY, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.5)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(dotX, dotY, 8, 0, Math.PI * 2);
+        ctx.stroke();
+
+        if (chartMeta) {
+          const peak = samples.reduce((acc, s) => Math.max(acc, Math.abs(s.dev)), 0);
+          const shown = Math.min(Math.max(peak, 0.1), MAX_CHART_DEG);
+          const tend = avg > 0 ? "over" : (avg < 0 ? "under" : "even");
+          chartMeta.textContent = `${samples.length} pts (side ${sideNow}), view ±${shown.toFixed(1)}°, avg ${avg.toFixed(2)}° (${tend})`;
+        }
+      } else if (chartMeta) {
+        chartMeta.textContent = showMeanMarkers ? `${samples.length} pts` : "";
+      }
+    } else if (chartMeta) {
+      chartMeta.textContent = showMeanMarkers ? "0 pts" : "";
+    }
+
+    ctx.restore();
   }
 
   let last = performance.now();
@@ -825,52 +981,67 @@
         lastCriticalAlertMs = now;
       }
     }
+    drawStabilityChart();
     requestAnimationFrame(animate);
   }
   animate();
 
-  targetIn.addEventListener("change", () => {
-    const v = parseFloat(targetIn.value);
-    target = sanitizeTarget(v);
-    targetIn.value = target;
-    persistSetting(STORAGE_KEYS.target, target);
-  });
+  if (targetIn) {
+    targetIn.addEventListener("change", () => {
+      const v = parseFloat(targetIn.value);
+      target = sanitizeTarget(v);
+      targetIn.value = target;
+      persistSetting(STORAGE_KEYS.target, target);
+    });
+  }
 
-  deadbandIn.addEventListener("change", () => {
-    const v = parseFloat(deadbandIn.value);
-    deadband = sanitizeDeadband(v);
-    deadbandIn.value = deadband;
-    persistSetting(STORAGE_KEYS.deadband, deadband);
-    if (critical <= deadband) {
-      critical = sanitizeCritical(critical, deadband);
+  if (deadbandIn) {
+    deadbandIn.addEventListener("change", () => {
+      const v = parseFloat(deadbandIn.value);
+      deadband = sanitizeDeadband(v);
+      deadbandIn.value = deadband;
+      persistSetting(STORAGE_KEYS.deadband, deadband);
+      if (critical <= deadband) {
+        critical = sanitizeCritical(critical, deadband);
+        if (criticalIn) criticalIn.value = critical;
+        persistSetting(STORAGE_KEYS.critical, critical);
+        if (silence <= critical) {
+          silence = sanitizeSilence(silence, critical);
+          if (silenceIn) silenceIn.value = silence;
+          persistSetting(STORAGE_KEYS.silence, silence);
+        }
+      }
+    });
+  }
+
+  if (criticalIn) {
+    criticalIn.addEventListener("change", () => {
+      const v = parseFloat(criticalIn.value);
+      critical = sanitizeCritical(v, deadband);
       criticalIn.value = critical;
       persistSetting(STORAGE_KEYS.critical, critical);
       if (silence <= critical) {
         silence = sanitizeSilence(silence, critical);
-        silenceIn.value = silence;
+        if (silenceIn) silenceIn.value = silence;
         persistSetting(STORAGE_KEYS.silence, silence);
       }
-    }
-  });
+    });
+  }
 
-  criticalIn.addEventListener("change", () => {
-    const v = parseFloat(criticalIn.value);
-    critical = sanitizeCritical(v, deadband);
-    criticalIn.value = critical;
-    persistSetting(STORAGE_KEYS.critical, critical);
-    if (silence <= critical) {
-      silence = sanitizeSilence(silence, critical);
+  if (silenceIn) {
+    silenceIn.addEventListener("change", () => {
+      const v = parseFloat(silenceIn.value);
+      silence = sanitizeSilence(v, critical);
       silenceIn.value = silence;
       persistSetting(STORAGE_KEYS.silence, silence);
-    }
-  });
+    });
+  }
 
-  silenceIn.addEventListener("change", () => {
-    const v = parseFloat(silenceIn.value);
-    silence = sanitizeSilence(v, critical);
-    silenceIn.value = silence;
-    persistSetting(STORAGE_KEYS.silence, silence);
-  });
+  if (settingsBtn) {
+    settingsBtn.addEventListener("click", () => {
+      window.location.href = "/settings.html";
+    });
+  }
 
   btnOffset.addEventListener("click", () => {
     if (!isFinite(angleActual)) return;
